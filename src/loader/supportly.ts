@@ -43,6 +43,7 @@ import supportlyIconUrl from "../images/supportly.png";
   });
 
   window.addEventListener("resize", () => applyFrameStyle(iframe, position));
+  window.visualViewport?.addEventListener("resize", () => applyFrameStyle(iframe, position));
 
   document.body.appendChild(button);
   document.body.appendChild(iframe);
@@ -86,8 +87,8 @@ function createButtonIcon(title: string): HTMLImageElement {
 function applyButtonStyle(button: HTMLButtonElement, position: "left" | "right", _primaryColor: string): void {
   Object.assign(button.style, {
     position: "fixed",
-    bottom: "20px",
-    [position]: "20px",
+    bottom: "max(20px, env(safe-area-inset-bottom))",
+    [position]: `max(20px, env(safe-area-inset-${position}))`,
     zIndex: "2147483000",
     display: "inline-flex",
     alignItems: "center",
@@ -105,17 +106,18 @@ function applyButtonStyle(button: HTMLButtonElement, position: "left" | "right",
 }
 
 function applyFrameStyle(iframe: HTMLIFrameElement, position: "left" | "right"): void {
-  const isMobile = window.innerWidth <= 480;
+  const isMobile = window.innerWidth <= 640;
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
   Object.assign(iframe.style, {
     position: "fixed",
     display: iframe.style.display === "block" ? "block" : "none",
     bottom: isMobile ? "0" : "82px",
     [position]: isMobile ? "0" : "20px",
     zIndex: "2147483001",
-    width: isMobile ? "100vw" : "380px",
-    height: isMobile ? "100vh" : "620px",
+    width: isMobile ? "100dvw" : "380px",
+    height: isMobile ? `${Math.round(viewportHeight)}px` : "620px",
     maxWidth: "100vw",
-    maxHeight: "100vh",
+    maxHeight: "100dvh",
     border: "0",
     borderRadius: isMobile ? "0" : "12px",
     boxShadow: "0 24px 60px rgba(15, 23, 42, 0.24)",

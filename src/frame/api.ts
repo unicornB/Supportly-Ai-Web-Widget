@@ -29,6 +29,7 @@ export async function createWidgetConversation(input: {
 export async function sendWidgetMessage(input: {
   conversationId: string;
   visitorToken: string;
+  clientMessageId?: string;
   content: string;
   pageUrl?: string;
   pageTitle?: string;
@@ -37,11 +38,18 @@ export async function sendWidgetMessage(input: {
     method: "POST",
     token: input.visitorToken,
     json: {
+      clientMessageId: input.clientMessageId,
       content: input.content,
       pageUrl: input.pageUrl,
       pageTitle: input.pageTitle,
     },
   });
+}
+
+export function createWidgetWebSocket(input: { conversationId: string; visitorToken: string }): WebSocket {
+  const url = buildWebSocketUrl(`/api/widget/ws?conversationId=${encodeURIComponent(input.conversationId)}`);
+  url.searchParams.set("token", input.visitorToken);
+  return new WebSocket(url);
 }
 
 export async function listWidgetMessages(input: {
@@ -76,4 +84,11 @@ async function apiRequest<T>(
   }
 
   return body?.data as T;
+}
+
+function buildWebSocketUrl(path: string): URL {
+  const base = API_BASE_URL || window.location.origin;
+  const url = new URL(path, base);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url;
 }

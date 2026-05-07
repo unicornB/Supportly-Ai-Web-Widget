@@ -22,3 +22,24 @@ export type SendMessageResult = {
   aiMessage: WidgetMessage | null;
   duplicate: boolean;
 };
+
+export type WidgetRealtimeEvent =
+  | {
+      type: "connected";
+      connectionKind: "visitor";
+      serverTime: string;
+    }
+  | {
+      type: "message.new";
+      conversationId: string;
+      message: WidgetMessage;
+    }
+  | {
+      type: "pong";
+      serverTime: string;
+    }
+  | {
+      type: "error";
+      code: string;
+      message: string;
+    };

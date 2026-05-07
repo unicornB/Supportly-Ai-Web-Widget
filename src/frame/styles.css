@@ -32,7 +32,8 @@ input {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
   width: 100%;
-  height: 100%;
+  min-height: 100%;
+  height: 100dvh;
   overflow: hidden;
   background: #ffffff;
 }
@@ -43,7 +44,7 @@ input {
   justify-content: space-between;
   gap: 12px;
   min-height: 64px;
-  padding: 14px 16px;
+  padding: max(14px, env(safe-area-inset-top)) 16px 14px;
   color: #ffffff;
   background: var(--supportly-primary);
 }
@@ -157,7 +158,7 @@ input {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   border-top: 1px solid #e2e8f0;
-  padding: 12px;
+  padding: 12px 12px max(12px, env(safe-area-inset-bottom));
   background: #ffffff;
 }
 

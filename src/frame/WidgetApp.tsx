@@ -1,6 +1,6 @@
 import { FormEvent, type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createWidgetConversation, listWidgetMessages, sendWidgetMessage } from "./api";
-import type { WidgetMessage, WidgetSession } from "./types";
+import { createWidgetConversation, createWidgetWebSocket, listWidgetMessages, sendWidgetMessage } from "./api";
+import type { WidgetMessage, WidgetRealtimeEvent, WidgetSession } from "./types";
 
 type WidgetConfig = {
   channelId: string;
@@ -11,6 +11,7 @@ type WidgetConfig = {
 };
 
 type LoadState = "loading" | "ready" | "error";
+type ConnectionState = "connecting" | "connected" | "reconnecting" | "disconnected";
 
 export function WidgetApp() {
   const config = useMemo(readConfig, []);
@@ -20,7 +21,9 @@ export function WidgetApp() {
   const [error, setError] = useState("");
   const [draft, setDraft] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const listRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<WidgetMessage[]>([]);
 
   const mergeMessages = useCallback((items: WidgetMessage[]) => {
     if (items.length === 0) return;
@@ -59,6 +62,10 @@ export function WidgetApp() {
     },
     [mergeMessages]
   );
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   useEffect(() => {
     let cancelled = false;
@@ -100,12 +107,61 @@ export function WidgetApp() {
   useEffect(() => {
     if (!session) return undefined;
 
-    const timer = window.setInterval(() => {
-      void pullMessages(session, getLastRemoteMessageId(messages)).catch(() => undefined);
-    }, 3000);
+    const activeSession = session;
+    let closedByEffect = false;
+    let reconnectTimer: number | undefined;
+    let reconnectAttempt = 0;
+    let socket: WebSocket | null = null;
 
-    return () => window.clearInterval(timer);
-  }, [messages, pullMessages, session]);
+    function scheduleReconnect() {
+      if (closedByEffect) return;
+      const delays = [1000, 2000, 5000, 10000, 30000];
+      const delay = delays[Math.min(reconnectAttempt, delays.length - 1)];
+      reconnectAttempt += 1;
+      setConnectionState("reconnecting");
+      reconnectTimer = window.setTimeout(connect, delay);
+    }
+
+    function connect() {
+      if (closedByEffect) return;
+      setConnectionState(reconnectAttempt > 0 ? "reconnecting" : "connecting");
+      socket = createWidgetWebSocket({
+        conversationId: activeSession.conversationId,
+        visitorToken: activeSession.visitorToken,
+      });
+
+      socket.onopen = () => {
+        reconnectAttempt = 0;
+        setConnectionState("connected");
+        const afterMessageId = getLastRemoteMessageId(messagesRef.current);
+        void pullMessages(activeSession, afterMessageId).catch(() => undefined);
+      };
+
+      socket.onmessage = (event) => {
+        const realtimeEvent = parseWidgetRealtimeEvent(event.data);
+        if (realtimeEvent?.type === "message.new" && realtimeEvent.conversationId === activeSession.conversationId) {
+          mergeMessages([realtimeEvent.message]);
+        }
+      };
+
+      socket.onclose = () => {
+        socket = null;
+        if (!closedByEffect) scheduleReconnect();
+      };
+
+      socket.onerror = () => {
+        setConnectionState("disconnected");
+      };
+    }
+
+    connect();
+
+    return () => {
+      closedByEffect = true;
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      socket?.close();
+    };
+  }, [mergeMessages, pullMessages, session]);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
@@ -122,8 +178,9 @@ export function WidgetApp() {
     setIsSending(true);
     setError("");
 
+    const clientMessageId = `local_${randomId()}`;
     const optimisticMessage: WidgetMessage = {
-      id: `local_${randomId()}`,
+      id: clientMessageId,
       direction: "inbound",
       senderType: "customer",
       messageType: "text",
@@ -137,12 +194,12 @@ export function WidgetApp() {
       const result = await sendWidgetMessage({
         conversationId: session.conversationId,
         visitorToken: session.visitorToken,
+        clientMessageId,
         content,
         pageUrl: config.pageUrl,
         pageTitle: config.pageTitle,
       });
-      replaceMessage(optimisticMessage.id, [result.inboundMessage, result.aiMessage].filter(Boolean) as WidgetMessage[]);
-      await pullMessages(session, result.aiMessage?.id ?? result.inboundMessage.id);
+      replaceMessage(optimisticMessage.id, [result.inboundMessage]);
     } catch (sendError) {
       setDraft(content);
       setMessages((current) =>
@@ -159,7 +216,7 @@ export function WidgetApp() {
       <header className="supportly-header">
         <div>
           <div className="supportly-title">{config.title}</div>
-          <div className="supportly-status">{loadState === "ready" ? "在线" : loadState === "loading" ? "连接中" : "不可用"}</div>
+          <div className="supportly-status">{formatConnectionStatus(loadState, connectionState)}</div>
         </div>
         <button className="supportly-close" type="button" aria-label="关闭" onClick={closeWidget}>
           ×
@@ -210,6 +267,24 @@ function formatSendStatus(status: WidgetMessage["status"]): string {
   if (status === "sending") return "发送中";
   if (status === "failed") return "发送失败";
   return "已发送";
+}
+
+function formatConnectionStatus(loadState: LoadState, connectionState: ConnectionState): string {
+  if (loadState === "loading") return "连接中";
+  if (loadState === "error") return "不可用";
+  if (connectionState === "connected") return "在线";
+  if (connectionState === "reconnecting") return "重连中";
+  return "连接中";
+}
+
+function parseWidgetRealtimeEvent(value: unknown): WidgetRealtimeEvent | null {
+  if (typeof value !== "string") return null;
+  try {
+    const event = JSON.parse(value) as WidgetRealtimeEvent;
+    return event && typeof event.type === "string" ? event : null;
+  } catch {
+    return null;
+  }
 }
 
 function getLastRemoteMessageId(messages: WidgetMessage[]): string | undefined {
